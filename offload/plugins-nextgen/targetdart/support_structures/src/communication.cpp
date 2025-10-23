@@ -651,18 +651,17 @@ tdrc TD_Communicator::send_allocation_request(void *base_ptr, int32_t base_devic
     if (dest != comm_rank) {
       reqs.emplace_back(MPI_REQUEST_NULL);
       MPI_Isend(&addr, 1, MPI_AINT, dest, SEND_ALLOCATION_REQUEST, targetdart_comm, &reqs.back());
-      reqs.emplace_back(MPI_REQUEST_NULL);
-      MPI_Isend(&base_deviceID, 1, MPI_INT32_T, dest, SEND_ALLOCATION_REQUEST, targetdart_comm, &reqs.back());
-      reqs.emplace_back(MPI_REQUEST_NULL);
-      MPI_Isend(&size, 1, MPI_UNSIGNED_LONG, dest, SEND_ALLOCATION_REQUEST, targetdart_comm, &reqs.back());
-      reqs.emplace_back(MPI_REQUEST_NULL);
-      MPI_Isend(&device, 1, MPI_INT, dest, SEND_ALLOCATION_REQUEST, targetdart_comm, &reqs.back());
     }
   }
   DP("RANK %d - Waiting on allocation requests receive\n", comm_rank);
   MPI_Waitall(static_cast<int>(reqs.size()), reqs.data(), MPI_STATUS_IGNORE);
   DP("RANK %d - All allocation requests received\n", comm_rank);
 
+  //MPI_Bcast(&addr, 1, MPI_AINT, comm_rank, targetdart_comm);
+  MPI_Bcast(&base_deviceID, 1, MPI_INT32_T, comm_rank, targetdart_comm);
+  MPI_Bcast(&size, 1, MPI_UNSIGNED_LONG, comm_rank, targetdart_comm);
+  MPI_Bcast(&device, 1, MPI_INT, comm_rank, targetdart_comm);
+  
   return TARGETDART_SUCCESS;
 }
 
@@ -674,9 +673,9 @@ tdrc TD_Communicator::receive_allocation_request(int cpu_device, int source) {
   tddev device;
 
   MPI_Recv(&addr, 1, MPI_AINT, source, SEND_ALLOCATION_REQUEST, targetdart_comm, MPI_STATUS_IGNORE);
-  MPI_Recv(&base_deviceID, 1, MPI_INT32_T, source, SEND_ALLOCATION_REQUEST, targetdart_comm, MPI_STATUS_IGNORE);
-  MPI_Recv(&size, 1, MPI_UNSIGNED_LONG, source, SEND_ALLOCATION_REQUEST, targetdart_comm, MPI_STATUS_IGNORE);
-  MPI_Recv(&device, 1, MPI_INT, source, SEND_ALLOCATION_REQUEST, targetdart_comm, MPI_STATUS_IGNORE);
+  MPI_Bcast(&base_deviceID, 1, MPI_INT32_T, source, targetdart_comm);
+  MPI_Bcast(&size, 1, MPI_UNSIGNED_LONG, source, targetdart_comm);
+  MPI_Bcast(&device, 1, MPI_INT, source, targetdart_comm);
 
   void *base_ptr = (void *)addr;
 
@@ -726,22 +725,21 @@ tdrc TD_Communicator::send_data_submit(void const *host_ptr, size_t size, void *
   std::vector<MPI_Request> reqs;
 
   MPI_Aint base_addr = (MPI_Aint)base_ptr;
-
   for (int dest = 0; dest < comm_size; dest++) {
     if (dest != comm_rank) {
       reqs.emplace_back(MPI_REQUEST_NULL);
       MPI_Isend(&size, 1, MPI_UNSIGNED_LONG, dest, SEND_DATA_SUBMIT, targetdart_comm, &reqs.back());
-      reqs.emplace_back(MPI_REQUEST_NULL);
-      MPI_Isend(host_ptr, size, MPI_BYTE, dest, SEND_DATA_SUBMIT, targetdart_comm, &reqs.back());
-      reqs.emplace_back(MPI_REQUEST_NULL);
-      MPI_Isend(&base_addr, 1, MPI_AINT, dest, SEND_DATA_SUBMIT, targetdart_comm, &reqs.back());
-      reqs.emplace_back(MPI_REQUEST_NULL);
-      MPI_Isend(&base_deviceID, 1, MPI_INT32_T, dest, SEND_DATA_SUBMIT, targetdart_comm, &reqs.back());
     }
   }
   DP("RANK %d - Waiting on data submits to be received\n", comm_rank);
   MPI_Waitall(static_cast<int>(reqs.size()), reqs.data(), MPI_STATUS_IGNORE);
   DP("RANK %d - All data submits received\n", comm_rank);
+  void *host_ptr_copy = const_cast<void *>(host_ptr);
+  MPI_Bcast(host_ptr_copy, size, MPI_BYTE, comm_rank, targetdart_comm);
+  MPI_Bcast(&base_addr, 1, MPI_AINT, comm_rank, targetdart_comm);
+  MPI_Bcast(&base_deviceID, 1, MPI_INT32_T, comm_rank, targetdart_comm);
+
+  //DP("Node %ld broadcasting data (send_data_submit): first message %f seconds, second message %f seconds\n", comm_rank, time2-time1, time3);
 
   return TARGETDART_SUCCESS;
 }
@@ -757,13 +755,12 @@ tdrc TD_Communicator::receive_data_submit(int cpu_device, int source) {
 
   host_ptr = std::malloc(size);
 
-  MPI_Recv(host_ptr, size , MPI_BYTE, source, SEND_DATA_SUBMIT, targetdart_comm, MPI_STATUS_IGNORE);
-
-  MPI_Recv(&base_addr, 1, MPI_AINT, source, SEND_DATA_SUBMIT, targetdart_comm, MPI_STATUS_IGNORE);
+  MPI_Bcast(host_ptr, size, MPI_BYTE, source, targetdart_comm);
+  MPI_Bcast(&base_addr, 1, MPI_AINT, source, targetdart_comm);
 
   base_ptr = (void *)base_addr;
 
-  MPI_Recv(&base_deviceID, 1, MPI_INT32_T, source, SEND_DATA_SUBMIT, targetdart_comm, MPI_STATUS_IGNORE);
+  MPI_Bcast(&base_deviceID, 1, MPI_INT32_T, source, targetdart_comm);
   
 
   DP("RANK %d - Received data submits from rank %d: host_ptr: " DPxMOD ", size: %lu, base_ptr " DPxMOD " deviceID %d rank %d\n", 
@@ -820,13 +817,13 @@ tdrc TD_Communicator::send_free_request(void *base_ptr, int32_t base_deviceID) {
     if (dest != comm_rank) {
       reqs.emplace_back(MPI_REQUEST_NULL);
       MPI_Isend(&addr, 1, MPI_AINT, dest, SEND_DATA_FREE, targetdart_comm, &reqs.back());
-      reqs.emplace_back(MPI_REQUEST_NULL);
-      MPI_Isend(&base_deviceID, 1, MPI_INT32_T, dest, SEND_DATA_FREE, targetdart_comm, &reqs.back());
     }
   }
   DP("RANK %d - Waiting on free requests to be received\n", comm_rank);
   MPI_Waitall(static_cast<int>(reqs.size()), reqs.data(), MPI_STATUS_IGNORE);
   DP("RANK %d - All free requests received\n", comm_rank);
+
+  MPI_Bcast(&base_deviceID, 1, MPI_INT32_T, comm_rank, targetdart_comm);
 
   return TARGETDART_SUCCESS;
 
@@ -836,7 +833,7 @@ tdrc TD_Communicator::receive_free_request(int cpu_device, int source) {
   int32_t base_deviceID;
 
   MPI_Recv(&addr, 1, MPI_AINT, source, SEND_DATA_FREE, targetdart_comm, MPI_STATUS_IGNORE);
-  MPI_Recv(&base_deviceID, 1, MPI_INT32_T, source, SEND_DATA_FREE, targetdart_comm, MPI_STATUS_IGNORE);
+  MPI_Bcast(&base_deviceID, 1, MPI_INT32_T, source, targetdart_comm);
 
   void *base_ptr = (void *)addr;
 
